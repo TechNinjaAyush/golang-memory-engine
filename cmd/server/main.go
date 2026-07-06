@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"service-mesg/db"
 	"service-mesg/model"
 	"time"
@@ -27,7 +28,7 @@ func main() {
 	//conneting to nats server
 
 	fmt.Print("Connecting to nats server...")
-	nc, err := nats.Connect(nats.DefaultURL, nats.MaxReconnects(-1), nats.ReconnectWait(2*time.Second))
+	nc, err := nats.Connect(os.Getenv("NATS_URL"), nats.MaxReconnects(-1), nats.ReconnectWait(2*time.Second))
 
 	if err != nil {
 		log.Fatal("Error in connecting nats", err)
@@ -45,7 +46,7 @@ func main() {
 
 	//  connecting to neo4j database
 
-	driver, err := neo4j.NewDriverWithContext("bolt://localhost:7687", neo4j.BasicAuth("neo4j", "password", ""))
+	driver, err := neo4j.NewDriverWithContext(os.Getenv("NEO4J_URI"), neo4j.BasicAuth(os.Getenv("NEO4J_USERNAME"), os.Getenv("NEO4J_PASSWORD"), ""))
 
 	if err != nil {
 		log.Fatal("Error in connecting to neo4j", err)
