@@ -1,0 +1,66 @@
+name: CI - Build and Push
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: ${{ secrets.GCP_REGION }}
+  REPOSITORY: ${{secrets.GAR_REPOSITORY }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev --quiet
+
+      -   name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
+  
+      -  name: Build Docker Image
+         uses: docker/build-push-action@v6
+         with:
+            context: .
+            push: false
+            load: true
+            tags: |
+              ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/memory-engine:${{ github.sha }}
+              ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/memory-engine:latest
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
+  
+      - name: Scan Docker Image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+            image-ref: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/memory-engine:${{ github.sha }}
+            format: table
+            severity: CRITICAL,HIGH
+            exit-code: '1'
+            ignore-unfixed: true
+  
+      - name: Push Docker Image
+        run: |
+            docker push ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/memory-engine:${{ github.sha }}
+            docker push ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/memory-engine:latest
