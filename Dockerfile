@@ -20,6 +20,5 @@ WORKDIR /app
 
 COPY --from=builder /app/memory-engine .
 
-USER nonroot:nonroot
 
 ENTRYPOINT ["./memory-engine"]

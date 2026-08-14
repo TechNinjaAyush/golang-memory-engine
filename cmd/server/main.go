@@ -110,6 +110,8 @@ func main() {
 	fmt.Println("Listening for messages...")
 
 	r := gin.Default()
+	r.GET("/healthz", CheckHealth)
+	r.GET("/readyz", CheckHealth)
 
 	r.Run(":3000")
 
