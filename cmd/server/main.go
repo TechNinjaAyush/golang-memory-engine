@@ -25,18 +25,32 @@ func main() {
 
 	ctx := context.Background()
 
-	//conneting to nats server
-
 	fmt.Print("Connecting to nats server...")
-	nc, err := nats.Connect(os.Getenv("NATS_URL"), nats.MaxReconnects(-1), nats.ReconnectWait(2*time.Second))
 
-	log.Printf("nats url is %s", os.Getenv("NATS_URL"))
+	natsURL := os.Getenv("NATS_URL")
+	log.Printf("nats url is %s", natsURL)
 
-	if err != nil {
-		log.Fatal("Error in connecting nats", err)
+	var nc *nats.Conn
+
+	for {
+		var err error
+
+		nc, err = nats.Connect(
+			natsURL,
+			nats.MaxReconnects(-1),
+			nats.ReconnectWait(10*time.Second),
+			nats.RetryOnFailedConnect(true),
+		)
+
+		if err == nil {
+			log.Println("NATS connected successfully")
+			break
+		}
+
+		log.Printf("Error in connecting nats: %v", err)
+		log.Println("Retrying NATS connection in 5 seconds...")
+		time.Sleep(5 * time.Second)
 	}
-
-	defer nc.Close()
 
 	// creating a jetstream context
 
