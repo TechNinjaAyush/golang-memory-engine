@@ -7,8 +7,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"service-mesg/db"
 	"service-mesg/model"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,8 +25,25 @@ func CheckHealth(c *gin.Context) {
 
 func main() {
 
-	ctx := context.Background()
+	sigch := make(chan os.Signal, 1)
+	signal.Notify(sigch, syscall.SIGINT, syscall.SIGTERM)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	r := gin.Default()
+
+	server := &http.Server{
+
+		Addr:    ":3000",
+		Handler: r,
+	}
+
+	go func() {
+
+		if err := r.Run(":3000"); err != nil {
+			log.Fatalf("Error in listening on port:%v", err)
+		}
+
+	}()
 	fmt.Print("Connecting to nats server...")
 
 	natsURL := os.Getenv("NATS_URL")
@@ -62,7 +81,7 @@ func main() {
 
 	//  connecting to neo4j database
 
-	driver, err := neo4j.NewDriverWithContext(os.Getenv("NEO4J_URI"), neo4j.BasicAuth(os.Getenv("NEO4J_USERNAME"), os.Getenv("NEO4J_PASSWORD"), ""))
+	driver, err := neo4j.NewDriverWithContext(os.Getenv("NEO4J_URL"), neo4j.BasicAuth(os.Getenv("NEO4J_USERNAME"), os.Getenv("NEO4J_PASSWORD"), ""))
 
 	if err != nil {
 		log.Fatal("Error in connecting to neo4j", err)
@@ -125,13 +144,18 @@ func main() {
 
 	fmt.Println("Listening for messages...")
 
-	r := gin.Default()
 	r.GET("/healthz", CheckHealth)
 	r.GET("/readyz", CheckHealth)
 
-	r.Run(":3000")
+	<-sigch
 
-	// Keep running
-	select {}
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+
+		log.Fatalf("failed to shutdown server %v", err)
+	}
+
+	log.Println("Server is shutdown with gracefully...")
 
 }
