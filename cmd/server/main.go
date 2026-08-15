@@ -41,13 +41,17 @@ func handleGraphSnapshot(msg *nats.Msg) {
 
 	nodes := data.Elements.Nodes
 
+	log.Printf("nodes are %v", nodes)
+
 	for _, n := range nodes {
+
 		db.CreateNode(n, scanTimestamp)
 	}
 
 	slog.Info("Node creation done")
 
 	edges := data.Elements.Edges
+	log.Printf("edges are %v", edges)
 
 	for _, e := range edges {
 		db.CreateEdge(e, scanTimestamp)

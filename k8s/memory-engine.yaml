@@ -75,7 +75,8 @@ spec:
     spec:
       containers:
         - name: memory-engine
-          image:     asia-south1-docker.pkg.dev/project-e8e2dbb5-cb6b-4e9e-a0b/sre-images/memory-engine:144a66154b26ddd418c9ba1defa7e8ce3295d146
+          image:     asia-south1-docker.pkg.dev/project-e8e2dbb5-cb6b-4e9e-a0b/sre-images/memory-engine:4cb3e831d1c5dbaba15378ccaeeae664e58546d2
+   
     
     
 
