@@ -60,11 +60,7 @@ func subscribeWithCoreNATS(nc *nats.Conn) error {
 	_, err := nc.Subscribe(graphSnapshotSubject, func(msg *nats.Msg) {
 		handleGraphSnapshot(msg)
 	})
-	if err != nil {
-		return err
-	}
-
-	return nc.FlushTimeout(5 * time.Second)
+	return err
 }
 
 func main() {
