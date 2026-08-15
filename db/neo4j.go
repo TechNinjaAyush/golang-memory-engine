@@ -3,8 +3,8 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
-	"log/slog"
 	"time"
 
 	"service-mesg/model"
@@ -14,9 +14,7 @@ import (
 
 var Driver neo4j.DriverWithContext
 
-func CreateNode(node model.Node, scanTimestamp int64) {
-	slog.Info("stareted node creation")
-
+func CreateNode(ctx context.Context, node model.Node, scanTimestamp int64) error {
 	// Convert Pods struct to a slice of maps so the Neo4j driver can parse it natively
 	var podsList []map[string]interface{}
 	for _, p := range node.Data.Pod {
@@ -58,35 +56,24 @@ func CreateNode(node model.Node, scanTimestamp int64) {
 		"scanTimestamp": scanTimestamp,
 	}
 
-	session := Driver.NewSession(
-		context.Background(),
-		neo4j.SessionConfig{},
-	)
+	session := Driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer session.Close(ctx)
 
-	defer session.Close(context.Background())
-
-	_, err := session.Run(
-		context.Background(),
-		query,
-		params,
-	)
-
-	if err != nil {
-		log.Println("Error creating node:", err)
-		return
-	}
-
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return result.Consume(ctx)
+	})
+	return err
 }
 
-func CreateEdge(edge model.Edge, scanTimestamp int64) {
-
-	log.Printf("edge creation started...")
-
+func CreateEdge(ctx context.Context, edge model.Edge, scanTimestamp int64) error {
 	// Serialize the nested Traffic struct into a JSON string
 	// Neo4j only accepts primitives, so nested objects must be stringified.
 	trafficJSON, err := json.Marshal(edge.Data.Traffic)
 	if err != nil {
-		log.Println("Error marshalling edge traffic:", err)
 		trafficJSON = []byte("{}")
 	}
 
@@ -119,29 +106,31 @@ func CreateEdge(edge model.Edge, scanTimestamp int64) {
 		"scanTimestamp":   scanTimestamp,
 	}
 
-	session := Driver.NewSession(
-		context.Background(),
-		neo4j.SessionConfig{},
-	)
-	defer session.Close(context.Background())
+	session := Driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer session.Close(ctx)
 
-	_, err = session.Run(
-		context.Background(),
-		query,
-		params,
-	)
-
+	summary, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		return result.Consume(ctx)
+	})
 	if err != nil {
-		log.Println("Error creating edge:", err)
-		return
+		return err
 	}
 
+	counters := summary.(neo4j.ResultSummary).Counters()
+	if counters.RelationshipsCreated() == 0 && counters.PropertiesSet() == 0 {
+		return fmt.Errorf("edge %q was not written because source %q or target %q was not found", edge.Data.ID, edge.Data.Source, edge.Data.Target)
+	}
+	return nil
 }
 
 // CleanupStaleData removes nodes and relationships that were not updated during the current sync cycle.
 // It is safe for repeated executions (idempotent) and will cleanly remove stale elements to keep
 // the Neo4j graph strictly synchronized with the Kubernetes state.
-func CleanupStaleData(scanTimestamp int64) {
+func CleanupStaleData(ctx context.Context, scanTimestamp int64) error {
 	// 1. Delete nodes that are stale (which will also DETACH their relationships)
 	nodeCleanupQuery := `
 	MATCH (n)
@@ -161,41 +150,44 @@ func CleanupStaleData(scanTimestamp int64) {
 		"scanTimestamp": scanTimestamp,
 	}
 
-	session := Driver.NewSession(
-		context.Background(),
-		neo4j.SessionConfig{},
-	)
-	defer session.Close(context.Background())
+	session := Driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer session.Close(ctx)
 
 	startTime := time.Now()
 
 	// Execute node cleanup
-	nodeResult, err := session.Run(context.Background(), nodeCleanupQuery, params)
-	if err != nil {
-		log.Println("Error cleaning up stale nodes:", err)
-		return
-	}
-	nodeSummary, err := nodeResult.Consume(context.Background())
-	if err != nil {
-		log.Println("Error consuming node cleanup summary:", err)
-		return
-	}
-	deletedNodes := nodeSummary.Counters().NodesDeleted()
+	summary, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		nodeResult, err := tx.Run(ctx, nodeCleanupQuery, params)
+		if err != nil {
+			return nil, err
+		}
+		nodeSummary, err := nodeResult.Consume(ctx)
+		if err != nil {
+			return nil, err
+		}
 
-	// Execute relationship cleanup
-	edgeResult, err := session.Run(context.Background(), edgeCleanupQuery, params)
+		edgeResult, err := tx.Run(ctx, edgeCleanupQuery, params)
+		if err != nil {
+			return nil, err
+		}
+		edgeSummary, err := edgeResult.Consume(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return []int{
+			nodeSummary.Counters().NodesDeleted(),
+			edgeSummary.Counters().RelationshipsDeleted(),
+		}, nil
+	})
 	if err != nil {
-		log.Println("Error cleaning up stale edges:", err)
-		return
+		return err
 	}
-	edgeSummary, err := edgeResult.Consume(context.Background())
-	if err != nil {
-		log.Println("Error consuming edge cleanup summary:", err)
-		return
-	}
-	deletedEdges := edgeSummary.Counters().RelationshipsDeleted()
+
+	deleted := summary.([]int)
 
 	duration := time.Since(startTime).Milliseconds()
 
-	log.Printf("Cleanup completed in %d ms. Deleted %d stale nodes and %d stale relationships.", duration, deletedNodes, deletedEdges)
+	log.Printf("Cleanup completed in %d ms. Deleted %d stale nodes and %d stale relationships.", duration, deleted[0], deleted[1])
+	return nil
 }

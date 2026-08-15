@@ -28,6 +28,9 @@ func CheckHealth(c *gin.Context) {
 }
 
 func handleGraphSnapshot(msg *nats.Msg) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	var data model.GraphResponse
 
 	err := json.Unmarshal(msg.Data, &data)
@@ -41,28 +44,46 @@ func handleGraphSnapshot(msg *nats.Msg) {
 
 	nodes := data.Elements.Nodes
 
-	log.Printf("nodes are %v", nodes)
+	log.Printf("Received graph snapshot with %d nodes and %d edges", len(nodes), len(data.Elements.Edges))
 
+	writtenNodes := 0
 	for _, n := range nodes {
-
-		db.CreateNode(n, scanTimestamp)
+		if n.Data.ID == "" {
+			log.Println("Skipping node with empty id")
+			continue
+		}
+		if err := db.CreateNode(ctx, n, scanTimestamp); err != nil {
+			log.Printf("Error creating node %q: %v", n.Data.ID, err)
+			continue
+		}
+		writtenNodes++
 	}
 
-	slog.Info("Node creation done")
+	slog.Info("Node creation done", "count", writtenNodes)
 
 	edges := data.Elements.Edges
-	log.Printf("edges are %v", edges)
 
+	writtenEdges := 0
 	for _, e := range edges {
-		db.CreateEdge(e, scanTimestamp)
+		if e.Data.ID == "" || e.Data.Source == "" || e.Data.Target == "" {
+			log.Printf("Skipping edge with missing id/source/target: id=%q source=%q target=%q", e.Data.ID, e.Data.Source, e.Data.Target)
+			continue
+		}
+		if err := db.CreateEdge(ctx, e, scanTimestamp); err != nil {
+			log.Printf("Error creating edge %q: %v", e.Data.ID, err)
+			continue
+		}
+		writtenEdges++
 	}
 
-	slog.Info("edge creation done")
+	slog.Info("edge creation done", "count", writtenEdges)
 
 	// Remove stale nodes and relationships not seen in this sync cycle
-	db.CleanupStaleData(scanTimestamp)
+	if err := db.CleanupStaleData(ctx, scanTimestamp); err != nil {
+		log.Println("Error cleaning up stale data:", err)
+	}
 
-	log.Println("Graph snapshot processed successfully")
+	log.Printf("Graph snapshot processed successfully: wrote %d/%d nodes and %d/%d edges", writtenNodes, len(nodes), writtenEdges, len(edges))
 }
 
 func subscribeWithCoreNATS(nc *nats.Conn) error {
