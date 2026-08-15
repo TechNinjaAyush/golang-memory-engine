@@ -51,6 +51,80 @@ func ensureGraphStream(ctx context.Context, js nats.JetStreamContext) error {
 	return err
 }
 
+func handleGraphSnapshot(msg *nats.Msg, shouldAck bool) {
+	var data model.GraphResponse
+
+	err := json.Unmarshal(msg.Data, &data)
+	if err != nil {
+		log.Println("Processing failed:", err)
+		return
+	}
+
+	// Generate a unique timestamp for this synchronization cycle
+	scanTimestamp := time.Now().UnixMilli()
+
+	nodes := data.Elements.Nodes
+
+	for _, n := range nodes {
+		db.CreateNode(n, scanTimestamp)
+	}
+
+	edges := data.Elements.Edges
+
+	for _, e := range edges {
+		db.CreateEdge(e, scanTimestamp)
+	}
+
+	// Remove stale nodes and relationships not seen in this sync cycle
+	db.CleanupStaleData(scanTimestamp)
+
+	if shouldAck {
+		err = msg.Ack()
+		if err != nil {
+			log.Println("Message ACK failed:", err)
+			return
+		}
+	}
+
+	log.Println("Graph snapshot processed successfully")
+}
+
+func subscribeWithJetStream(js nats.JetStreamContext) error {
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := ensureGraphStream(streamCtx, js)
+	streamCancel()
+	if err != nil {
+		return err
+	}
+
+	subCtx, subCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, err = js.Subscribe(
+		graphSnapshotSubject,
+		func(msg *nats.Msg) {
+			handleGraphSnapshot(msg, true)
+		},
+		nats.BindStream(graphSnapshotStream),
+		nats.Durable(graphSnapshotConsumer),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(5),
+		nats.ManualAck(),
+		nats.Context(subCtx),
+	)
+	subCancel()
+	return err
+}
+
+func subscribeWithCoreNATS(nc *nats.Conn) error {
+	_, err := nc.Subscribe(graphSnapshotSubject, func(msg *nats.Msg) {
+		handleGraphSnapshot(msg, false)
+	})
+	if err != nil {
+		return err
+	}
+
+	return nc.Flush()
+}
+
 func main() {
 
 	sigch := make(chan os.Signal, 1)
@@ -104,21 +178,7 @@ func main() {
 	// Creating a JetStream context
 	js, err := nc.JetStream()
 	if err != nil {
-		log.Fatal("Jetstream creation failed: ", err)
-	}
-
-	for {
-		streamCtx, streamCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err = ensureGraphStream(streamCtx, js)
-		streamCancel()
-
-		if err == nil {
-			log.Printf("JetStream stream %s is ready for subject %s", graphSnapshotStream, graphSnapshotSubject)
-			break
-		}
-
-		log.Printf("JetStream stream setup failed: %v. Retrying in 5 seconds...", err)
-		time.Sleep(5 * time.Second)
+		log.Println("Jetstream creation failed, falling back to core NATS:", err)
 	}
 
 	// Connecting to Neo4j
@@ -151,65 +211,21 @@ func main() {
 
 	log.Println("Neo4j connected successfully...")
 
-	// Subscribe to graph snapshots with retry loop and timeout
-	for {
-		subCtx, subCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_, err = js.Subscribe(
-			graphSnapshotSubject,
-
-			func(msg *nats.Msg) {
-
-				var data model.GraphResponse
-
-				err := json.Unmarshal(msg.Data, &data)
-				if err != nil {
-					log.Println("Processing failed:", err)
-					return
-				}
-
-				// Generate a unique timestamp for this synchronization cycle
-				scanTimestamp := time.Now().UnixMilli()
-
-				nodes := data.Elements.Nodes
-
-				for _, n := range nodes {
-					db.CreateNode(n, scanTimestamp)
-				}
-
-				edges := data.Elements.Edges
-
-				for _, e := range edges {
-					db.CreateEdge(e, scanTimestamp)
-				}
-
-				// Remove stale nodes and relationships not seen in this sync cycle
-				db.CleanupStaleData(scanTimestamp)
-
-				err = msg.Ack()
-				if err != nil {
-					log.Println("Message ACK failed:", err)
-					return
-				}
-
-				log.Println("Graph snapshot processed successfully")
-			},
-
-			nats.BindStream(graphSnapshotStream),
-			nats.Durable(graphSnapshotConsumer),
-			nats.AckWait(30*time.Second),
-			nats.MaxDeliver(5),
-			nats.ManualAck(),
-			nats.Context(subCtx),
-		)
-		subCancel()
-
+	if js != nil {
+		err = subscribeWithJetStream(js)
 		if err == nil {
-			log.Println("Subscribed to graph.snapshot successfully")
-			break
+			log.Printf("Subscribed to %s with JetStream stream %s", graphSnapshotSubject, graphSnapshotStream)
+		} else {
+			log.Printf("JetStream subscription unavailable: %v. Falling back to core NATS subscription.", err)
 		}
+	}
 
-		log.Printf("Subscription failed: %v. Retrying in 5 seconds...", err)
-		time.Sleep(5 * time.Second)
+	if js == nil || err != nil {
+		err = subscribeWithCoreNATS(nc)
+		if err != nil {
+			log.Fatal("Core NATS subscription failed: ", err)
+		}
+		log.Printf("Subscribed to %s with core NATS", graphSnapshotSubject)
 	}
 
 	fmt.Println("Listening for messages...")
