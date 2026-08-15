@@ -38,7 +38,12 @@ spec:
     - name: bolt
       port: 7687
       targetPort: 7687
-      protocol: TCP
+      protocol: TCP 
+
+    - name: http
+      port: 7474
+      targetPort: 7474
+      protocol: TCP  
 
 ---
 apiVersion: apps/v1
@@ -70,7 +75,8 @@ spec:
     spec:
       containers:
         - name: memory-engine
-          image:     asia-south1-docker.pkg.dev/project-e8e2dbb5-cb6b-4e9e-a0b/sre-images/memory-engine:03a277c38b9ae5dd940d58a77b17ccb790fe1e96
+          image:     asia-south1-docker.pkg.dev/project-e8e2dbb5-cb6b-4e9e-a0b/sre-images/memory-engine:144a66154b26ddd418c9ba1defa7e8ce3295d146
+    
     
 
 

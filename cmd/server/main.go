@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -44,11 +45,15 @@ func handleGraphSnapshot(msg *nats.Msg) {
 		db.CreateNode(n, scanTimestamp)
 	}
 
+	slog.Info("Node creation done")
+
 	edges := data.Elements.Edges
 
 	for _, e := range edges {
 		db.CreateEdge(e, scanTimestamp)
 	}
+
+	slog.Info("edge creation done")
 
 	// Remove stale nodes and relationships not seen in this sync cycle
 	db.CleanupStaleData(scanTimestamp)

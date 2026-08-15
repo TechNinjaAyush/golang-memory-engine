@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"time"
 
 	"service-mesg/model"
@@ -14,6 +15,7 @@ import (
 var Driver neo4j.DriverWithContext
 
 func CreateNode(node model.Node, scanTimestamp int64) {
+	slog.Info("stareted node creation")
 
 	// Convert Pods struct to a slice of maps so the Neo4j driver can parse it natively
 	var podsList []map[string]interface{}
@@ -77,6 +79,8 @@ func CreateNode(node model.Node, scanTimestamp int64) {
 }
 
 func CreateEdge(edge model.Edge, scanTimestamp int64) {
+
+	log.Printf("edge creation started...")
 
 	// Serialize the nested Traffic struct into a JSON string
 	// Neo4j only accepts primitives, so nested objects must be stringified.
