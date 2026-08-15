@@ -30,17 +30,14 @@ kind: Service
 metadata:
   name: neo4j
   namespace: default
-  labels:
-    app.kubernetes.io/name: neo4j
-    app.kubernetes.io/component: database
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: neo4j
+    app: neo4j
   ports:
     - name: bolt
       port: 7687
-      targetPort: bolt
+      targetPort: 7687
       protocol: TCP
 
 ---
@@ -73,7 +70,8 @@ spec:
     spec:
       containers:
         - name: memory-engine
-          image:   asia-south1-docker.pkg.dev/project-e8e2dbb5-cb6b-4e9e-a0b/sre-images/memory-engine:4f4a47e20240582fef05cafe3639d8551f75ab64
+          image: asia-south1-docker.pkg.dev/project-e8e2dbb5-cb6b-4e9e-a0b/sre-images/memory-engine:fbc9ed8862e92f7fba902dcde16f262b32dfda5a
+
 
 
           imagePullPolicy: IfNotPresent
